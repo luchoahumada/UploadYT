@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube to Mediastream</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .input-with-icon {
+            position: relative;
+        }
+
+        .input-with-icon input {
+            padding-right: 45px;
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 20px;
+            color: #666;
+            padding: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+        }
+
+        .toggle-password:hover {
+            color: #667eea;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status-container {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .status-container.active {
+            display: block;
+        }
+
+        .status-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .status-item-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+        }
+        
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: currentColor;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .status-item.downloading {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .status-item.uploading {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        .status-item.processing {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .status-item.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            font-weight: 600;
+        }
+        
+        .status-item.downloading.completed,
+        .status-item.uploading.completed,
+        .status-item.processing.completed {
+            opacity: 0.9;
+        }
+
+        .status-item.error {
+            background: #ffebee;
+            color: #c62828;
+            font-weight: 600;
+        }
+        
+        .status-item.error .check-icon {
+            background: #c62828;
+        }
+
+        .spinner {
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-left-color: currentColor;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .check-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: currentColor;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .time-badge {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: auto;
+        }
+        
+        .total-time {
+            margin-top: 15px;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 1.1em;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .result-container {
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            border: 2px solid #4caf50;
+        }
+
+        .result-title {
+            color: #2e7d32;
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+
+        .result-item {
+            margin-bottom: 15px;
+        }
+
+        .result-label {
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .result-value {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+
+        .copy-btn {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            cursor: pointer;
+            margin-left: 10px;
+            transition: background 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: #45a049;
+        }
+
+        .player-preview {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .player-preview iframe {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196f3;
+        }
+
+        .info-box p {
+            color: #1565c0;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📹 YouTube to Mediastream</h1>
+        <p class="subtitle">Descarga videos de YouTube y súbelos automáticamente a Mediastream Platform</p>
+
+        <div class="info-box">
+            <p><strong>🚀 Sistema Optimizado:</strong> El video se descarga de YouTube y se sube a Mediastream <strong>SIMULTÁNEAMENTE</strong> en chunks de 10MB, lo que hace el proceso hasta 2x más rápido.</p>
+            <p><strong>✨ Características:</strong></p>
+            <ul style="margin: 10px 0 0 20px; line-height: 1.6;">
+                <li>Máxima calidad disponible (1080p, 4K, 8K)</li>
+                <li>Sin límite de tamaño de archivo</li>
+                <li>Copia automática de título, descripción y thumbnail</li>
+                <li>Monitoreo en tiempo real hasta que el video esté listo</li>
+            </ul>
+        </div>
+
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="mediastreamToken">
+                    Token de Mediastream 
+                    <a href="https://streammanager.co/account" target="_blank" style="color: #667eea; text-decoration: none; font-size: 0.85em;">(obtener token)</a>
+                </label>
+                <div class="input-with-icon">
+                    <input 
+                        type="password" 
+                        id="mediastreamToken" 
+                        name="mediastreamToken" 
+                        placeholder="Pega tu token de escritura de Mediastream aquí" 
+                        required
+                    >
+                    <button type="button" class="toggle-password" onclick="toggleTokenVisibility()">
+                        <span id="toggleIcon">👁️</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="youtubeUrl">URL de YouTube</label>
+                <input 
+                    type="text" 
+                    id="youtubeUrl" 
+                    name="youtubeUrl" 
+                    placeholder="https://www.youtube.com/watch?v=..." 
+                    required
+                >
+            </div>
+            <button type="submit" id="submitBtn">Descargar y Subir</button>
+        </form>
+
+        <div id="statusContainer" class="status-container">
+            <div id="statusMessages"></div>
+        </div>
+
+        <div id="resultContainer" style="display: none;">
+            <div class="result-container">
+                <div class="result-title">✅ Video subido exitosamente</div>
+                
+                <div class="result-item">
+                    <div class="result-label">URL del Player:</div>
+                    <div class="result-value" id="playerUrl"></div>
+                    <button class="copy-btn" onclick="copyToClipboard('playerUrl')">Copiar</button>
+                </div>
+
+                <div class="result-item">
+                    <div class="result-label">Código Embed:</div>
+                    <div class="result-value" id="embedCode"></div>
+                    <button class="copy-btn" onclick="copyToClipboard('embedCode')">Copiar</button>
+                </div>
+
+                <div class="result-item">
+                    <div class="result-label">Media URL:</div>
+                    <div class="result-value" id="mediaUrl"></div>
+                    <button class="copy-btn" onclick="copyToClipboard('mediaUrl')">Copiar</button>
+                </div>
+                
+                <div class="result-item">
+                    <div class="result-label">Link Directo (Streammanager):</div>
+                    <div class="result-value" id="directLink"></div>
+                    <button class="copy-btn" onclick="copyToClipboard('directLink')">Copiar</button>
+                </div>
+                
+                <div class="result-item" id="youtubeInfo" style="display: none;">
+                    <div class="result-label">Información de YouTube:</div>
+                    <div class="result-value" id="youtubeInfoData"></div>
+                </div>
+                
+                <div class="result-item" id="processingInfo">
+                    <div class="result-label">Estado del Procesamiento:</div>
+                    <div class="result-value" id="processingStatus"></div>
+                </div>
+
+                <div class="player-preview">
+                    <h3>Vista Previa:</h3>
+                    <div id="playerEmbed"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const statusContainer = document.getElementById('statusContainer');
+        const statusMessages = document.getElementById('statusMessages');
+        const resultContainer = document.getElementById('resultContainer');
+
+        // Cargar token guardado si existe
+        const savedToken = localStorage.getItem('mediastreamToken');
+        if (savedToken) {
+            document.getElementById('mediastreamToken').value = savedToken;
+        }
+
+        // Función para mostrar/ocultar token
+        function toggleTokenVisibility() {
+            const tokenInput = document.getElementById('mediastreamToken');
+            const toggleIcon = document.getElementById('toggleIcon');
+            
+            if (tokenInput.type === 'password') {
+                tokenInput.type = 'text';
+                toggleIcon.textContent = '🙈';
+            } else {
+                tokenInput.type = 'password';
+                toggleIcon.textContent = '👁️';
+            }
+        }
+
+        let startTime = null;
+        let stageStartTimes = {};
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const youtubeUrl = document.getElementById('youtubeUrl').value;
+            const mediastreamToken = document.getElementById('mediastreamToken').value;
+            
+            // Guardar token en localStorage para uso futuro
+            localStorage.setItem('mediastreamToken', mediastreamToken);
+            
+            // Iniciar timer
+            startTime = Date.now();
+            stageStartTimes = {};
+            
+            // Reset UI
+            statusMessages.innerHTML = '';
+            Object.keys(statusElements).forEach(key => delete statusElements[key]);
+            statusContainer.classList.add('active');
+            resultContainer.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Procesando...';
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ youtubeUrl, mediastreamToken }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n').filter(line => line.trim());
+
+                    for (const line of lines) {
+                        try {
+                            const data = JSON.parse(line);
+                            handleStatusUpdate(data);
+                        } catch (e) {
+                            console.error('Error parsing JSON:', e);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                addStatusMessage('error', 'Error de conexión: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Descargar y Subir';
+            }
+        });
+
+        const statusElements = {};
+        const STATUS_MAP = {
+            'downloading': 'downloading',
+            'download-complete': 'downloading',
+            'uploading': 'uploading',
+            'processing': 'processing'
+        };
+
+        function handleStatusUpdate(data) {
+            if (data.status === 'success') {
+                // Marcar proceso como completado
+                const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                
+                // Completar todos los estados pendientes
+                ['downloading', 'uploading', 'processing'].forEach(key => {
+                    if (statusElements[key]) {
+                        markAsCompleted(statusElements[key], key);
+                    }
+                });
+                
+                createOrUpdateStatus('success', data.message, null, false, true);
+                
+                // Mostrar tiempo total
+                showTotalTime(totalTime);
+                
+                showResults(data.data);
+            } else if (data.status === 'error') {
+                createOrUpdateStatus('error', data.message, null, false, false);
+            } else {
+                // Mapear status relacionados a la misma línea
+                const statusKey = STATUS_MAP[data.status] || data.status;
+                
+                // Si el progreso es 100%, marcar como completado
+                if (data.progress >= 100) {
+                    createOrUpdateStatus(statusKey, data.message, 100, false, true);
+                } else {
+                    createOrUpdateStatus(statusKey, data.message, data.progress, true, false);
+                }
+            }
+        }
+
+        function createOrUpdateStatus(statusKey, message, progress, showSpinner, isCompleted) {
+            // Si el elemento ya existe, solo actualizarlo
+            if (statusElements[statusKey]) {
+                if (isCompleted) {
+                    markAsCompleted(statusElements[statusKey], statusKey);
+                } else {
+                    updateStatusMessage(statusElements[statusKey], message, progress);
+                }
+                return;
+            }
+            
+            // Iniciar timer para este stage
+            if (!stageStartTimes[statusKey] && showSpinner) {
+                stageStartTimes[statusKey] = Date.now();
+            }
+            
+            // Si no existe, crear uno nuevo
+            const statusItem = document.createElement('div');
+            statusItem.className = `status-item ${statusKey}`;
+            statusItem.dataset.status = statusKey;
+            
+            if (isCompleted) {
+                statusItem.innerHTML = `
+                    <div class="status-item-header">
+                        <div class="check-icon">✓</div>
+                        <span class="status-message">${message}</span>
+                        <span class="time-badge">Completado</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: 100%"></div>
+                    </div>
+                `;
+            } else if (showSpinner) {
+                statusItem.innerHTML = `
+                    <div class="status-item-header">
+                        <div class="spinner"></div>
+                        <span class="status-message">${message}</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: ${progress || 0}%"></div>
+                    </div>
+                `;
+            } else {
+                // Para mensajes sin progreso (como success/error)
+                const icon = statusKey === 'success' ? '✓' : (statusKey === 'error' ? '✗' : '');
+                statusItem.innerHTML = `
+                    <div class="status-item-header">
+                        ${icon ? `<div class="check-icon">${icon}</div>` : ''}
+                        <span>${message}</span>
+                    </div>
+                `;
+            }
+            
+            statusElements[statusKey] = statusItem;
+            statusMessages.appendChild(statusItem);
+        }
+        
+        function updateStatusMessage(element, message, progress) {
+            const messageSpan = element.querySelector('.status-message');
+            if (messageSpan) {
+                messageSpan.textContent = message;
+            }
+            
+            const progressBar = element.querySelector('.progress-bar');
+            if (progressBar && progress !== undefined) {
+                progressBar.style.width = `${progress}%`;
+            }
+        }
+        
+        function markAsCompleted(element, statusKey) {
+            // Marcar como completado
+            element.classList.add('completed');
+            
+            // Calcular tiempo consumido en este stage
+            const stageTime = stageStartTimes[statusKey] 
+                ? ((Date.now() - stageStartTimes[statusKey]) / 1000).toFixed(1)
+                : null;
+            
+            // Reemplazar spinner con checkmark
+            const header = element.querySelector('.status-item-header');
+            const spinner = header.querySelector('.spinner');
+            
+            if (spinner) {
+                const checkIcon = document.createElement('div');
+                checkIcon.className = 'check-icon';
+                checkIcon.textContent = '✓';
+                spinner.replaceWith(checkIcon);
+            }
+            
+            // Actualizar mensaje para indicar completado
+            const messageSpan = element.querySelector('.status-message');
+            if (messageSpan && !messageSpan.textContent.includes('✓')) {
+                const statusNames = {
+                    'downloading': 'Descarga',
+                    'uploading': 'Subida',
+                    'processing': 'Procesamiento'
+                };
+                const statusName = statusNames[statusKey] || 'Proceso';
+                messageSpan.textContent = `${statusName} completado ✓`;
+            }
+            
+            // Agregar badge de tiempo
+            const existingBadge = header.querySelector('.time-badge');
+            if (!existingBadge && stageTime) {
+                const timeBadge = document.createElement('span');
+                timeBadge.className = 'time-badge';
+                timeBadge.textContent = `${stageTime}s`;
+                header.appendChild(timeBadge);
+            }
+            
+            // Asegurar que la barra de progreso esté al 100%
+            const progressBar = element.querySelector('.progress-bar');
+            if (progressBar) {
+                progressBar.style.width = '100%';
+            }
+        }
+        
+        function showTotalTime(totalSeconds) {
+            // Eliminar badge existente si hay
+            const existingBadge = statusMessages.querySelector('.total-time');
+            if (existingBadge) {
+                existingBadge.remove();
+            }
+            
+            // Formatear tiempo
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = (totalSeconds % 60).toFixed(1);
+            const timeText = minutes > 0 
+                ? `⏱️ Proceso completado en ${minutes}m ${seconds}s`
+                : `⏱️ Proceso completado en ${seconds}s`;
+            
+            // Crear badge de tiempo total
+            const timeBadge = document.createElement('div');
+            timeBadge.className = 'total-time';
+            timeBadge.textContent = timeText;
+            statusMessages.appendChild(timeBadge);
+        }
+
+        function showResults(data) {
+            document.getElementById('playerUrl').textContent = data.playerUrl;
+            document.getElementById('embedCode').textContent = data.embedCode;
+            document.getElementById('mediaUrl').textContent = data.mediaUrl;
+            document.getElementById('directLink').textContent = data.directLink;
+            document.getElementById('playerEmbed').innerHTML = data.embedCode;
+            
+            // Mostrar información de YouTube
+            if (data.youtubeInfo) {
+                const ytInfo = data.youtubeInfo;
+                const infoText = `📹 Título: ${ytInfo.originalTitle}\n👤 Canal: ${ytInfo.author}\n⏱️ Duración: ${ytInfo.duration}`;
+                document.getElementById('youtubeInfoData').textContent = infoText;
+                document.getElementById('youtubeInfo').style.display = 'block';
+            }
+            
+            // Mostrar estado de procesamiento
+            if (data.processingStatus) {
+                const status = data.processingStatus;
+                let statusText = '';
+                let statusClass = 'result-value';
+                
+                if (status.renditions > 0) {
+                    statusText = `✅ Video completamente procesado y listo\n\n`;
+                    statusText += `📊 Calidades disponibles: ${status.renditions}\n`;
+                    statusText += `⏱️ Duración: ${Math.floor(status.duration / 60)}:${(status.duration % 60).toString().padStart(2, '0')}\n`;
+                    statusText += `📡 Streaming HLS: ${status.hasHLS ? '✅ Activo' : '❌ No disponible'}\n`;
+                    statusText += `📢 Estado: ${status.published ? '✅ Publicado' : '⏳ Borrador'}\n`;
+                    statusText += `🔄 Inicializado: ${status.initialized ? '✅ Sí' : '⏳ En proceso'}`;
+                } else if (status.uploaded) {
+                    statusText = `⏳ Video en proceso de transcodificación\n\n`;
+                    statusText += `El video se está procesando en Mediastream.\n`;
+                    statusText += `Esto puede tardar varios minutos dependiendo del tamaño.\n`;
+                    statusText += `El player embed aparecerá cuando esté listo.`;
+                } else {
+                    statusText = `⏳ Inicializando video en Mediastream\n\n`;
+                    statusText += `El video está siendo preparado para procesamiento.`;
+                }
+                
+                const statusElement = document.getElementById('processingStatus');
+                statusElement.textContent = statusText;
+                statusElement.style.background = status.renditions > 0 ? '#e8f5e9' : '#fff3e0';
+                statusElement.style.color = status.renditions > 0 ? '#2e7d32' : '#f57c00';
+            }
+            
+            resultContainer.style.display = 'block';
+        }
+
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copiado';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                console.error('Error al copiar:', err);
+            });
+        }
+    </script>
+</body>
+</html>
