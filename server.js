@@ -3,17 +3,18 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const FormData = require('form-data');
-const { exec, spawn } = require('child_process');
-const { promisify } = require('util');
+const { spawn } = require('child_process');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
 
-const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MEDIASTREAM_TOKEN = process.env.MEDIASTREAM_TOKEN;
 const MEDIASTREAM_API = process.env.MEDIASTREAM_API || 'https://platform.mediastre.am/api';
+const CHUNK_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const MEDIA_POLL_MAX_ATTEMPTS = 30;
+const MEDIA_POLL_WAIT_MS = 10000;
 
 // Middlewares
 app.use(cors());
@@ -175,7 +176,7 @@ async function getFormatFileSize(youtubeUrl, format) {
   });
 }
 
-async function waitForMediaCreation(uploadPath, token, maxAttempts = 30, waitMs = 10000) {
+async function waitForMediaCreation(uploadPath, token, maxAttempts = MEDIA_POLL_MAX_ATTEMPTS, waitMs = MEDIA_POLL_WAIT_MS) {
   const namePart = String(uploadPath || '').trim().split('.').pop();
   console.log(`🔍 Esperando creación de media con name_part: ${namePart}`);
   console.log(`🌐 Buscando en API: ${MEDIASTREAM_API}`);
@@ -389,7 +390,7 @@ async function splitFileIntoChunks(filePath, chunkSize, tmpDir, fileName) {
 }
 
 async function uploadToMediastreamChunkedLikeBash(filePath, fileName, token, progressCallback) {
-  const CHUNK_SIZE = 10 * 1024 * 1024;
+  const CHUNK_SIZE = CHUNK_SIZE_BYTES;
   const stats = await fs.stat(filePath);
   const fileSize = stats.size;
   const tmpDir = path.join(DOWNLOADS_DIR, 'tmp');
@@ -437,265 +438,14 @@ async function uploadToMediastreamChunkedLikeBash(filePath, fileName, token, pro
     await fs.unlink(chunk.path).catch(() => {});
   }
 
-  const media = await waitForMediaCreation(uploadPath, token, 30, 10000);
+  const media = await waitForMediaCreation(uploadPath, token);
   if (!media) {
     throw new Error('No se pudo encontrar el media después de subir los chunks');
   }
   return media;
 }
 
-// Función MEJORADA para descargar Y subir SIMULTÁNEAMENTE por chunks
-async function downloadAndUploadSimultaneously(youtubeUrl, fileName, token, durationSec, downloadCallback, uploadCallback) {
-  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
-  const tempFile = path.join(DOWNLOADS_DIR, `temp_${Date.now()}.mp4`);
-  
-  console.log('🎬 Iniciando descarga y upload simultáneo...');
-  
-  // 1. Obtener el mejor formato 1080p disponible
-  const formatInfo = await getBest1080pFormat(youtubeUrl, durationSec);
-  const sizeFromYtdlp = await getFormatFileSize(youtubeUrl, formatInfo.format);
-  
-  // 2. Obtener upload token y media ID
-  const estimatedSize = sizeFromYtdlp || (formatInfo.sizeBytes && formatInfo.sizeBytes > 0 ? formatInfo.sizeBytes : 0);
-  if (!estimatedSize) {
-    throw new Error('NO_FILESIZE');
-  }
-  console.log(`🔑 Obteniendo upload token de Mediastream (size=${Math.round(estimatedSize / (1024 * 1024))}MB)...`);
-  const { uploadPath, mediaId } = await getUploadToken(fileName, estimatedSize, token);
-  console.log(`✅ Upload configurado:`, {
-    path: uploadPath.substring(0, 80) + '...',
-    mediaId: mediaId || 'Se obtendrá después'
-  });
-  
-  // 3. Iniciar descarga con yt-dlp en background
-  console.log('📥 Iniciando descarga con yt-dlp en 1080p...');
-  
-  // Argumentos base - usando formato seleccionado
-  const ytdlpArgs = [
-    '-f', formatInfo.format,
-    '--merge-output-format', 'mp4',
-    '--no-part', // Escribir directamente al archivo final (sin .part temporal)
-    '--buffer-size', '8K', // Buffer pequeño para escribir más frecuentemente
-    '--no-check-certificates',
-    '--no-playlist', // Solo el video, no playlist
-    '--cookies-from-browser', 'chrome', // Usar cookies de Chrome para autenticación
-    '--newline',
-    '--progress'
-  ];
-  
-  // Archivo de salida y URL
-  ytdlpArgs.push('-o', tempFile);
-  ytdlpArgs.push(youtubeUrl);
-  
-  console.log('\n' + '─'.repeat(80));
-  console.log(`📂 Archivo temporal: ${tempFile}`);
-  console.log(`🎬 Descargando: 1080p MP4 (Formato: ${formatInfo.format})`);
-  console.log(`📦 Tamaño estimado: ${(estimatedSize / (1024 * 1024)).toFixed(2)}MB`);
-  console.log(`🔧 Iniciando descarga y upload simultáneo...`);
-  console.log('─'.repeat(80) + '\n');
-  
-  const downloadProcess = spawn('yt-dlp', ytdlpArgs);
-  
-  let downloadComplete = false;
-  let downloadError = null;
-  let lastDownloadProgress = 0;
-  let errorOutput = '';
-  let stdoutBuffer = '';
-  
-  // Monitorear progreso de descarga
-  downloadProcess.stdout.on('data', (data) => {
-    const output = data.toString();
-    stdoutBuffer += output;
-    
-    // Buscar información del formato seleccionado
-    if (output.includes('[info]') || output.includes('format')) {
-      console.log(`ℹ️  ${output.trim()}`);
-    }
-    
-    const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
-    if (progressMatch) {
-      const progress = parseFloat(progressMatch[1]);
-      if (progress - lastDownloadProgress >= 5 || progress === 100) {
-        lastDownloadProgress = progress;
-        console.log(`📥 Descarga: ${progress}%`);
-        if (downloadCallback) downloadCallback(progress);
-      }
-    }
-  });
-  
-  downloadProcess.stderr.on('data', (data) => {
-    const output = data.toString();
-    errorOutput += output;
-    
-    // Mostrar información importante del stderr (que no sea error)
-    if (output.includes('Downloading') || output.includes('format') || output.includes('resolution')) {
-      console.log(`📊 ${output.trim()}`);
-    }
-  });
-  
-  downloadProcess.on('error', (error) => {
-    console.error('❌ Error en proceso de descarga:', error.message);
-    downloadError = error;
-    downloadComplete = true;
-  });
-  
-  downloadProcess.on('close', (code) => {
-    downloadComplete = true;
-    if (code !== 0 && !downloadError) {
-      downloadError = new Error(errorOutput || `Descarga falló con código ${code}`);
-    }
-    console.log(downloadError ? `❌ Descarga falló` : '✅ Descarga completada');
-  });
-  
-  // 3. Subir chunks mientras descarga (SIMULTÁNEO)
-  let uploadedBytes = 0;
-  let chunkNumber = 0;
-  let lastUploadProgress = 0;
-  
-  console.log('🚀 Iniciando upload por chunks simultáneo...');
-  
-  return new Promise((resolve, reject) => {
-    let checkCount = 0;
-    
-    const uploadInterval = setInterval(async () => {
-      checkCount++;
-      try {
-        // Verificar si el archivo existe
-        let fileSize = 0;
-        let fileExists = false;
-        
-        try {
-          const stats = await fs.stat(tempFile);
-          fileSize = stats.size;
-          fileExists = true;
-        } catch {
-          // Archivo no existe aún
-          console.log(`⏳ Check #${checkCount}: Esperando que se cree el archivo... (descarga: ${downloadComplete ? 'completa' : 'en progreso'})`);
-          
-          if (downloadComplete && downloadError) {
-            clearInterval(uploadInterval);
-            reject(downloadError);
-          }
-          return;
-        }
-        
-        // Calcular bytes pendientes de subir
-        const bytesAvailable = fileSize - uploadedBytes;
-        
-        console.log(`🔍 Check #${checkCount}: Archivo=${(fileSize / 1024 / 1024).toFixed(2)}MB | Subido=${(uploadedBytes / 1024 / 1024).toFixed(2)}MB | Disponible=${(bytesAvailable / 1024 / 1024).toFixed(2)}MB | Descarga=${downloadComplete ? 'COMPLETA' : 'en progreso'}`);
-        
-        // Subir chunk si:
-        // - Hay un chunk completo disponible (10MB+), O
-        // - La descarga terminó y quedan bytes por subir
-        const shouldUpload = bytesAvailable >= CHUNK_SIZE || 
-                            (downloadComplete && bytesAvailable > 0);
-        
-        if (shouldUpload) {
-          const nextChunkNumber = chunkNumber + 1;
-          const chunkEnd = Math.min(uploadedBytes + CHUNK_SIZE, fileSize);
-          const chunkSize = chunkEnd - uploadedBytes;
-          
-          console.log(`\n📤 === SUBIENDO CHUNK #${nextChunkNumber} ===`);
-          console.log(`   Tamaño: ${(chunkSize / 1024 / 1024).toFixed(2)}MB`);
-          console.log(`   Rango: bytes ${uploadedBytes}-${chunkEnd} de ${fileSize}`);
-          console.log(`   Progreso: ${((chunkEnd / fileSize) * 100).toFixed(1)}%`);
-          
-          let uploaded = false;
-          let attempts = 0;
-          
-          while (!uploaded && attempts < 3) {
-            attempts++;
-            try {
-              // Leer solo el chunk necesario (más eficiente)
-              const fileHandle = await fs.open(tempFile, 'r');
-              const chunkBuffer = Buffer.alloc(chunkSize);
-              await fileHandle.read(chunkBuffer, 0, chunkSize, uploadedBytes);
-              await fileHandle.close();
-              
-              console.log(`   ✓ Chunk leído del disco (intento ${attempts}/3)`);
-              
-              // Preparar y subir chunk
-              const formData = new FormData();
-              formData.append('file', chunkBuffer, {
-                filename: fileName,
-                contentType: 'application/octet-stream'
-              });
-              formData.append('name', fileName);
-              
-              console.log(`   ⬆️  Subiendo a Mediastream...`);
-              
-              await axios.post(
-                `${uploadPath}?resumableChunkNumber=${nextChunkNumber}`,
-                formData,
-                {
-                  headers: { ...formData.getHeaders() },
-                  maxBodyLength: Infinity,
-                  timeout: 180000
-                }
-              );
-              
-              uploaded = true;
-              chunkNumber = nextChunkNumber;
-              uploadedBytes = chunkEnd;
-              console.log(`   ✅ Chunk #${chunkNumber} SUBIDO exitosamente\n`);
-              
-              // Actualizar progreso de upload
-              if (downloadComplete && fileSize > 0) {
-                const uploadProgress = Math.round((uploadedBytes / fileSize) * 100);
-                if (uploadProgress - lastUploadProgress >= 5 || uploadProgress === 100) {
-                  lastUploadProgress = uploadProgress;
-                  if (uploadCallback) uploadCallback(uploadProgress);
-                }
-              }
-            } catch (uploadError) {
-              console.error(`   ❌ Error subiendo chunk #${nextChunkNumber} (intento ${attempts}/3):`, uploadError.message);
-              if (attempts >= 3) {
-                throw new Error(`Fallo al subir chunk #${nextChunkNumber} después de 3 intentos`);
-              }
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-          }
-        } else if (fileExists) {
-          console.log(`⏸️  Esperando más datos (necesita ${(CHUNK_SIZE / 1024 / 1024).toFixed(2)}MB, disponible ${(bytesAvailable / 1024 / 1024).toFixed(2)}MB)...`);
-        }
-        
-        // Verificar si terminamos TODO
-        if (downloadComplete && uploadedBytes >= fileSize && fileSize > 0) {
-          clearInterval(uploadInterval);
-          
-          if (downloadError) {
-            reject(downloadError);
-          } else {
-            console.log(`\n🎉 ¡TODOS LOS CHUNKS SUBIDOS!`);
-            console.log(`   Total de chunks: ${chunkNumber}`);
-            console.log(`   Tamaño total: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
-            console.log(`   Checks realizados: ${checkCount}`);
-            console.log(`   ✅ Formato: MP4 1080p (1920x1080)`);
-            console.log(`   ✅ Codec: H.264/AVC + AAC Audio`);
-            
-            // Esperar creación automática del media (según flujo oficial)
-            console.log('\n📝 Esperando creación automática del media...');
-            
-            (async () => {
-              const media = await waitForMediaCreation(uploadPath, token, 30, 10000);
-              if (media?._id) {
-                resolve({ uploadPath, tempFile, mediaId: media._id });
-              } else {
-                console.error('❌ No se pudo encontrar media creado');
-                resolve({ uploadPath, tempFile, mediaId: null });
-              }
-            })();
-          }
-        }
-        
-      } catch (error) {
-        console.error('❌ Error en loop de upload:', error.message);
-        clearInterval(uploadInterval);
-        reject(error);
-      }
-    }, 2000); // Revisar cada 2 segundos (antes 3s)
-  });
-}
+// (eliminado) downloadAndUploadSimultaneously: ya no se usa
 
 // Función para descargar video de YouTube con progreso (FALLBACK sin streaming)
 async function downloadYouTubeVideo(url, outputPath, progressCallback) {
@@ -709,15 +459,22 @@ async function downloadYouTubeVideo(url, outputPath, progressCallback) {
   
   for (let i = 0; i < formatOptions.length; i++) {
     const format = formatOptions[i];
-    const command = `yt-dlp -f "${format}" --merge-output-format mp4 --no-check-certificates --no-playlist --newline --progress -o "${outputPath}" "${url}"`;
+    const args = [
+      '-f', format,
+      '--merge-output-format', 'mp4',
+      '--no-check-certificates',
+      '--no-playlist',
+      '--newline',
+      '--progress',
+      '-o', outputPath,
+      url
+    ];
     
     try {
       console.log(`Intentando descargar con formato: ${format}`);
       
       return await new Promise((resolve, reject) => {
-        const process = exec(command, { 
-          maxBuffer: 1024 * 1024 * 100
-        });
+        const process = spawn('yt-dlp', args);
         
         let lastProgress = '';
         
@@ -813,139 +570,12 @@ async function getUploadToken(fileName, fileSize, token) {
   }
 }
 
-// Función para verificar si un chunk ya fue subido
-async function checkChunkExists(uploadPath, chunkNumber) {
-  try {
-    const response = await axios.get(
-      `${uploadPath}?resumableChunkNumber=${chunkNumber}`,
-      { validateStatus: (status) => status === 200 || status === 204 }
-    );
-    
-    // 204 = No Content = chunk no existe
-    // 200 = OK = chunk ya existe
-    return response.status === 200;
-  } catch (error) {
-    return false;
-  }
-}
+// (eliminado) checkChunkExists: ya no se usa
 
-// Función para subir un archivo por chunks a Mediastream
-async function uploadToMediastreamChunked(filePath, fileName, token, progressCallback) {
-  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-  
-  try {
-    const stats = await fs.stat(filePath);
-    const fileSize = stats.size;
-    const fileSizeInMB = fileSize / (1024 * 1024);
-    
-    console.log(`📦 Preparando upload por chunks: ${fileSizeInMB.toFixed(2)} MB`);
-    
-    // 1. Obtener upload token y media ID
-    const { uploadPath, mediaId: initialMediaId } = await getUploadToken(fileName, fileSize, token);
-    console.log(`✅ Upload token obtenido. Media ID: ${initialMediaId || 'No disponible aún'}`);
-    
-    // 2. Calcular número de chunks
-    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-    console.log(`📊 Total de chunks: ${totalChunks} (${CHUNK_SIZE / 1024 / 1024}MB cada uno)`);
-    
-    // 3. Leer archivo completo
-    const fileBuffer = await fs.readFile(filePath);
-    
-    // 4. Subir cada chunk
-    for (let chunkNumber = 1; chunkNumber <= totalChunks; chunkNumber++) {
-      const start = (chunkNumber - 1) * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, fileSize);
-      const chunkBuffer = fileBuffer.slice(start, end);
-      const chunkSizeMB = (chunkBuffer.length / 1024 / 1024).toFixed(2);
-      
-      console.log(`\n📤 Chunk ${chunkNumber}/${totalChunks} (${chunkSizeMB} MB)`);
-      
-      // Verificar si el chunk ya existe
-      const exists = await checkChunkExists(uploadPath, chunkNumber);
-      
-      if (exists) {
-        console.log(`✓ Chunk ${chunkNumber} ya existe, saltando...`);
-        const progress = Math.round((chunkNumber / totalChunks) * 100);
-        if (progressCallback) progressCallback(progress);
-        continue;
-      }
-      
-      // Preparar FormData para el chunk
-      const formData = new FormData();
-      formData.append('file', chunkBuffer, {
-        filename: fileName,
-        contentType: 'application/octet-stream'
-      });
-      formData.append('name', fileName);
-      
-      // Subir chunk con reintentos
-      let uploaded = false;
-      let retries = 3;
-      
-      while (!uploaded && retries > 0) {
-        try {
-          const uploadResponse = await axios.post(
-            `${uploadPath}?resumableChunkNumber=${chunkNumber}`,
-            formData,
-            {
-              headers: {
-                ...formData.getHeaders()
-              },
-              maxBodyLength: Infinity,
-              timeout: 120000
-            }
-          );
-          
-          console.log(`✅ Chunk ${chunkNumber}/${totalChunks} subido: ${uploadResponse.data}`);
-          uploaded = true;
-          
-        } catch (error) {
-          retries--;
-          console.error(`❌ Error subiendo chunk ${chunkNumber}:`, {
-            status: error.response?.status,
-            data: error.response?.data,
-            message: error.message
-          });
-          
-          if (retries > 0) {
-            console.log(`⚠️  Reintentando... (${retries} intentos restantes)`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          } else {
-            throw new Error(`Error subiendo chunk ${chunkNumber}`);
-          }
-        }
-      }
-      
-      // Actualizar progreso
-      const progress = Math.round((chunkNumber / totalChunks) * 100);
-      if (progressCallback) progressCallback(progress);
-    }
-    
-    console.log('\n🎉 Todos los chunks subidos exitosamente');
-    console.log(`   Total de chunks: ${totalChunks}`);
-    console.log(`   Tamaño del archivo: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
-    console.log(`   ✅ Formato: MP4 1080p (1920x1080)`);
-    console.log(`   ✅ Codec: H.264/AVC + AAC Audio`);
-    
-    // Esperar creación automática del media (según flujo oficial)
-    console.log('\n📝 Esperando creación automática del media...');
-    const media = await waitForMediaCreation(uploadPath, token, 30, 10000);
-    if (media) {
-      console.log('✅ Media creado exitosamente!');
-      console.log(`   Media ID: ${media._id}`);
-      console.log(`   Title: ${media.title}`);
-      return media;
-    }
-    throw new Error('No se pudo encontrar el media después de subir los chunks');
-    
-  } catch (error) {
-    console.error('❌ Error en upload por chunks:', error.message);
-    throw error;
-  }
-}
+// (eliminado) uploadToMediastreamChunked: ya no se usa
 
-// Función para subir video a Mediastream con streaming y retry (FALLBACK)
-async function uploadToMediastream(filePath, title, token, progressCallback) {
+// (eliminado) uploadToMediastream: ya no se usa
+/* async function uploadToMediastream(filePath, title, token, progressCallback) {
   const MAX_RETRIES = 3;
   let lastError;
   
@@ -1070,7 +700,7 @@ async function uploadToMediastream(filePath, title, token, progressCallback) {
   }
   
   throw lastError;
-}
+} */
 
 // Función para obtener detalles del media
 async function getMediaDetails(mediaId, token) {
@@ -1572,7 +1202,7 @@ app.post('/api/upload', async (req, res) => {
         await fs.unlink(p).catch(() => {});
       }
     }
-    await fs.unlink(outputPath).catch(() => {});
+    console.log(`📁 MP4 final guardado: ${outputPath}`);
     
   } catch (error) {
     console.error('Error en el proceso:', error);
@@ -1582,8 +1212,7 @@ app.post('/api/upload', async (req, res) => {
     }) + '\n');
     res.end();
     
-    // Limpiar archivo temporal en caso de error
-    await fs.unlink(outputPath).catch(() => {});
+    console.log(`📁 MP4 final guardado (error): ${outputPath}`);
   }
 });
 

@@ -93,7 +93,7 @@ npm run dev
 
 2. Abre tu navegador en: http://localhost:3000
 
-3. Ingresa tu **Token de Mediastream** (obtenerlo desde https://streammanager.co/account)
+3. Ingresa tu **Token de Mediastream** (obtenerlo desde https://platform.mediastre.am/settings/api)
    - El token se guardará automáticamente en tu navegador
    - Asegúrate de usar un token con **permisos de escritura**
    - Se muestra oculto por seguridad (usa el ojo para verlo)
@@ -126,6 +126,8 @@ UploadYT/
 ```
 
 ## 🔧 API Endpoints
+
+Base URL de la plataforma: https://platform.mediastre.am/
 
 ### POST /api/upload
 Descarga un video de YouTube y lo sube a Mediastream.
