@@ -34,7 +34,7 @@ Aplicación web avanzada que descarga videos de YouTube en máxima calidad y los
 
 ## 📋 Requisitos Previos
 
-1. **Node.js** (versión 14 o superior)
+1. **Node.js** (versión 20 o superior)
 2. **yt-dlp** - Herramienta para descargar videos de YouTube
 
 ### Instalar yt-dlp
@@ -281,6 +281,12 @@ pip install --upgrade yt-dlp
 - Verifica que tu token tenga permisos de escritura
 - Verifica tu conexión a internet
 - Revisa los logs del servidor para más detalles
+
+## ⚖️ Disclaimer de Licencias
+
+- Este proyecto usa `yt-dlp` para descargas desde YouTube.
+- `yt-dlp` se distribuye bajo su propia licencia. Consulta: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+- El uso de `yt-dlp` debe cumplir sus términos y la legislación aplicable.
 
 ## 📝 Licencia
 

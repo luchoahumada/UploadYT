@@ -54,10 +54,15 @@ async function getYouTubeMetadata(url) {
           try {
             const info = JSON.parse(jsonOutput);
             
+            const thumbnails = Array.isArray(info.thumbnails) ? info.thumbnails : [];
+            // Ordenar thumbnails por resolución (desc)
+            thumbnails.sort((a, b) => (b.width || 0) - (a.width || 0));
+
             const metadata = {
               title: info.title || 'YouTube Video',
               description: info.description || '',
-              thumbnail: info.thumbnail || '',
+              thumbnail: info.thumbnail || (thumbnails[0]?.url || ''),
+              thumbnails: thumbnails,
               duration: parseInt(info.duration) || 0,
               author: info.uploader || info.channel || '',
               videoId: info.id || '',
@@ -93,16 +98,34 @@ async function getYouTubeMetadata(url) {
   }
 }
 
-// Función para descargar thumbnail de YouTube
-async function downloadThumbnail(thumbnailUrl, outputPath) {
+// Función para descargar múltiples thumbnails de YouTube
+async function downloadThumbnails(thumbnails, outputPrefix, maxCount = 5) {
   try {
-    const response = await axios.get(thumbnailUrl, { responseType: 'arraybuffer' });
-    await fs.writeFile(outputPath, response.data);
-    console.log('✅ Thumbnail descargado');
-    return true;
+    if (!thumbnails || thumbnails.length === 0) return [];
+    const uniqueUrls = [];
+    for (const t of thumbnails) {
+      if (t?.url && !uniqueUrls.includes(t.url)) uniqueUrls.push(t.url);
+    }
+    const selected = uniqueUrls.slice(0, maxCount);
+    const paths = [];
+
+    for (let i = 0; i < selected.length; i++) {
+      const url = selected[i];
+      const outputPath = `${outputPrefix}_${i + 1}.jpg`;
+      try {
+        const response = await axios.get(url, { responseType: 'arraybuffer' });
+        await fs.writeFile(outputPath, response.data);
+        paths.push(outputPath);
+        console.log(`✅ Thumbnail descargado (${i + 1}/${selected.length})`);
+      } catch (error) {
+        console.warn(`⚠️  Error descargando thumbnail ${i + 1}:`, error.message);
+      }
+    }
+
+    return paths;
   } catch (error) {
-    console.error('⚠️  Error descargando thumbnail:', error.message);
-    return false;
+    console.error('⚠️  Error descargando thumbnails:', error.message);
+    return [];
   }
 }
 
@@ -1081,8 +1104,59 @@ async function getMediaDetails(mediaId, token) {
   }
 }
 
+async function getMediaThumbnails(mediaId, token) {
+  try {
+    const response = await axios.get(
+      `${MEDIASTREAM_API}/media/${mediaId}/thumbs`,
+      { params: { token: token } }
+    );
+    if (response.data?.status === 'OK' && Array.isArray(response.data.data)) {
+      return response.data.data[0]?.thumbnails || [];
+    }
+    return [];
+  } catch (error) {
+    console.warn('⚠️  Error obteniendo thumbnails:', error.message);
+    return [];
+  }
+}
+
+async function setDefaultThumbnail(mediaId, thumbId, token) {
+  try {
+    const form = new URLSearchParams({ token: token });
+    await axios.post(
+      `${MEDIASTREAM_API}/media/${mediaId}/thumb/${thumbId}`,
+      form,
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    console.log(`✅ Thumbnail por defecto seteado: ${thumbId}`);
+  } catch (error) {
+    console.warn('⚠️  Error seteando thumbnail por defecto:', error.message);
+  }
+}
+
+async function uploadThumbnailAsCover(mediaId, token, thumbnailPath) {
+  const formData = new FormData();
+  formData.append('token', token);
+  const thumbnailStream = fsSync.createReadStream(thumbnailPath);
+  formData.append('cover', thumbnailStream, {
+    filename: path.basename(thumbnailPath),
+    contentType: 'image/jpeg'
+  });
+  await axios.post(
+    `${MEDIASTREAM_API}/media/${mediaId}`,
+    formData,
+    {
+      headers: {
+        ...formData.getHeaders(),
+        'X-Api-Token': token
+      },
+      maxBodyLength: Infinity
+    }
+  );
+}
+
 // Función MEJORADA para actualizar metadata del media con toda la info de YouTube
-async function updateMediaMetadata(mediaId, metadata, token, thumbnailPath) {
+async function updateMediaMetadata(mediaId, metadata, token, thumbnailPaths) {
   try {
     console.log(`📝 Actualizando metadata del media ${mediaId}...`);
     
@@ -1129,20 +1203,21 @@ async function updateMediaMetadata(mediaId, metadata, token, thumbnailPath) {
       formData.append('custom_fields', JSON.stringify(customFields));
     }
     
-    // Subir thumbnail si está disponible
-    if (thumbnailPath) {
+    // Subir thumbnail principal si está disponible
+    if (thumbnailPaths && thumbnailPaths.length > 0) {
       try {
+        const thumbnailPath = thumbnailPaths[0];
         const thumbnailExists = await fs.access(thumbnailPath).then(() => true).catch(() => false);
         if (thumbnailExists) {
           const thumbnailStream = fsSync.createReadStream(thumbnailPath);
           formData.append('cover', thumbnailStream, {
-            filename: 'thumbnail.jpg',
+            filename: path.basename(thumbnailPath),
             contentType: 'image/jpeg'
           });
-          console.log('📸 Incluyendo thumbnail en metadata...');
+          console.log('📸 Incluyendo thumbnail principal en metadata...');
         }
       } catch (error) {
-        console.warn('⚠️  No se pudo incluir thumbnail:', error.message);
+        console.warn('⚠️  No se pudo incluir thumbnail principal:', error.message);
       }
     }
     
@@ -1162,9 +1237,27 @@ async function updateMediaMetadata(mediaId, metadata, token, thumbnailPath) {
       title: metadata.title?.substring(0, 50),
       description: metadata.description ? `${metadata.description.length} chars` : 'N/A',
       tags: metadata.tags?.length || 0,
-      thumbnail: thumbnailPath ? 'Incluido' : 'No disponible',
+      thumbnails: thumbnailPaths?.length || 0,
       customFields: Object.keys(customFields).length
     });
+
+    // Subir thumbnails adicionales (si existen)
+    if (thumbnailPaths && thumbnailPaths.length > 1) {
+      console.log(`📸 Subiendo ${thumbnailPaths.length - 1} thumbnails adicionales...`);
+      for (let i = 1; i < thumbnailPaths.length; i++) {
+        try {
+          await uploadThumbnailAsCover(mediaId, token, thumbnailPaths[i]);
+        } catch (error) {
+          console.warn(`⚠️  Error subiendo thumbnail ${i + 1}:`, error.message);
+        }
+      }
+
+      // Obtener thumbnails y setear el primero como predeterminado
+      const thumbs = await getMediaThumbnails(mediaId, token);
+      if (thumbs.length > 0) {
+        await setDefaultThumbnail(mediaId, thumbs[0]._id, token);
+      }
+    }
     
     return response.data;
   } catch (error) {
@@ -1282,10 +1375,10 @@ app.post('/api/upload', async (req, res) => {
     }
     
     // 2. Descargar thumbnail de YouTube
-    const thumbnailPath = ytMetadata ? path.join(DOWNLOADS_DIR, `thumb_${timestamp}.jpg`) : null;
-    if (ytMetadata && thumbnailPath) {
-      await downloadThumbnail(ytMetadata.thumbnail, thumbnailPath);
-    }
+    const thumbnailPrefix = ytMetadata ? path.join(DOWNLOADS_DIR, `thumb_${timestamp}`) : null;
+    const thumbnailPaths = (ytMetadata && thumbnailPrefix)
+      ? await downloadThumbnails(ytMetadata.thumbnails || [], thumbnailPrefix, 5)
+      : [];
     
     // 3. Descargar completo y subir por chunks (igual al bash)
     const fileName = ytMetadata 
@@ -1408,7 +1501,7 @@ app.post('/api/upload', async (req, res) => {
           tags: tags
         }, 
         token,
-        thumbnailPath // Incluir thumbnail
+        thumbnailPaths // Incluir thumbnails
       );
       
       console.log('✅ Metadata completa actualizada:', {
@@ -1474,8 +1567,10 @@ app.post('/api/upload', async (req, res) => {
     if (tempFile) {
       console.log(`📁 MP4 temporal guardado: ${tempFile}`);
     }
-    if (thumbnailPath) {
-      await fs.unlink(thumbnailPath).catch(() => {});
+    if (thumbnailPaths && thumbnailPaths.length > 0) {
+      for (const p of thumbnailPaths) {
+        await fs.unlink(p).catch(() => {});
+      }
     }
     await fs.unlink(outputPath).catch(() => {});
     
