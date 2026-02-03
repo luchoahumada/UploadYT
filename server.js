@@ -12,6 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MEDIASTREAM_TOKEN = process.env.MEDIASTREAM_TOKEN;
 const MEDIASTREAM_API = process.env.MEDIASTREAM_API || 'https://platform.mediastre.am/api';
+const YT_COOKIES_BROWSER = process.env.YT_COOKIES_BROWSER || 'chrome';
 const CHUNK_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const MEDIA_POLL_MAX_ATTEMPTS = 30;
 const MEDIA_POLL_WAIT_MS = 10000;
@@ -35,7 +36,7 @@ async function getYouTubeMetadata(url) {
         '--dump-json',
         '--no-download',
         '--no-warnings',
-        '--cookies-from-browser', 'chrome',
+        '--cookies-from-browser', YT_COOKIES_BROWSER,
         url
       ]);
       
@@ -152,7 +153,7 @@ async function getFormatFileSize(youtubeUrl, format) {
     const process = spawn('yt-dlp', [
       '--no-download',
       '--no-check-certificates',
-      '--cookies-from-browser', 'chrome',
+      '--cookies-from-browser', YT_COOKIES_BROWSER,
       '--print', 'filesize',
       '--print', 'filesize_approx',
       '-f', format,
@@ -216,7 +217,7 @@ async function getBest1080pFormat(youtubeUrl, durationSec = 0) {
     const process = spawn('yt-dlp', [
       '-F', // Listar formatos
       '--no-check-certificates',
-      '--cookies-from-browser', 'chrome',
+      '--cookies-from-browser', YT_COOKIES_BROWSER,
       youtubeUrl
     ]);
     
@@ -395,7 +396,7 @@ async function uploadToMediastreamChunkedLikeBash(filePath, fileName, token, pro
   const fileSize = stats.size;
   const tmpDir = path.join(DOWNLOADS_DIR, 'tmp');
 
-  console.log(`📦 Preparando upload por chunks (bash): ${(fileSize / (1024 * 1024)).toFixed(2)} MB`);
+  console.log(`📦 Preparando upload por chunks: ${(fileSize / (1024 * 1024)).toFixed(2)} MB`);
 
   const { uploadPath } = await getUploadToken(fileName, fileSize, token);
   console.log(`✅ Upload token obtenido. Upload path: ${uploadPath.substring(0, 80)}...`);
@@ -464,6 +465,7 @@ async function downloadYouTubeVideo(url, outputPath, progressCallback) {
       '--merge-output-format', 'mp4',
       '--no-check-certificates',
       '--no-playlist',
+      '--cookies-from-browser', YT_COOKIES_BROWSER,
       '--newline',
       '--progress',
       '-o', outputPath,
@@ -514,7 +516,10 @@ async function downloadYouTubeVideo(url, outputPath, progressCallback) {
       
       if (i === formatOptions.length - 1) {
         console.error('Error downloading video:', error);
-        throw new Error(`No se pudo descargar el video. Intenta actualizar yt-dlp con: yt-dlp -U`);
+        throw new Error(
+          `No se pudo descargar el video. ` +
+          `Asegúrate de tener sesión activa en ${YT_COOKIES_BROWSER} y actualiza yt-dlp con: yt-dlp -U`
+        );
       }
     }
   }
@@ -898,7 +903,7 @@ async function updateMediaMetadata(mediaId, metadata, token, thumbnailPaths) {
 
 // Función para monitorear el estado de procesamiento del media
 async function monitorMediaProcessing(mediaId, token, statusCallback) {
-  const maxAttempts = 60; // 10 minutos máximo (60 * 10s)
+  const maxAttempts = 60; // 20 minutos máximo (60 * 20s)
   let attempts = 0;
   
   while (attempts < maxAttempts) {
@@ -916,6 +921,9 @@ async function monitorMediaProcessing(mediaId, token, statusCallback) {
       }
     } else {
       const hasRenditions = media.meta && media.meta.length > 0;
+      const firstRenditionReady = Array.isArray(media.meta)
+        ? media.meta.some((m) => !m.is_original && m.status === 'OK')
+        : false;
       const duration = media.duration || 0;
       const originalMeta = media.meta?.find((m) => m.is_original) || null;
       const isUploaded = typeof media.is_uploaded === 'boolean'
@@ -937,8 +945,11 @@ async function monitorMediaProcessing(mediaId, token, statusCallback) {
           status: hasRenditions ? 'ready' : 'processing',
           message: hasRenditions 
             ? `Video listo - ${media.meta.length} calidades disponibles (${duration}s)`
-            : `Procesando video... (${attempts * 10}s transcurridos)`,
-          media: media
+            : `Procesando video... (${attempts * 20}s transcurridos)`,
+          media: media,
+          playerUrl: media?._id ? generatePlayerUrl(media._id) : null,
+          embedCode: media?._id ? generateEmbedCode(media._id) : null,
+          firstRenditionReady
         });
       }
       
@@ -949,8 +960,8 @@ async function monitorMediaProcessing(mediaId, token, statusCallback) {
       }
     }
     
-    // Esperar 10 segundos antes de verificar de nuevo
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // Esperar 20 segundos antes de verificar de nuevo
+    await new Promise(resolve => setTimeout(resolve, 20000));
   }
   
   throw new Error('Timeout esperando que el video se procese');
@@ -997,6 +1008,21 @@ app.post('/api/upload', async (req, res) => {
     const ytMetadata = await getYouTubeMetadata(youtubeUrl);
     
     if (ytMetadata) {
+      const thumbUrls = Array.isArray(ytMetadata.thumbnails)
+        ? ytMetadata.thumbnails.slice(0, 3).map((t) => t.url).filter(Boolean)
+        : [];
+      res.write(JSON.stringify({
+        status: 'youtube-info',
+        data: {
+          title: ytMetadata.title,
+          author: ytMetadata.author,
+          duration: ytMetadata.duration,
+          viewCount: ytMetadata.viewCount,
+          uploadDate: ytMetadata.uploadDate,
+          videoId: ytMetadata.videoId,
+          thumbnails: thumbUrls
+        }
+      }) + '\n');
       res.write(JSON.stringify({ 
         status: 'downloading', 
         message: `Descargando: ${ytMetadata.title.substring(0, 50)}...`, 
@@ -1153,7 +1179,11 @@ app.post('/api/upload', async (req, res) => {
       res.write(JSON.stringify({ 
         status: 'processing', 
         message: status.message, 
-        progress: 70 + Math.min(status.status === 'ready' ? 30 : 20, 30)
+        progress: 70 + Math.min(status.status === 'ready' ? 30 : 20, 30),
+        embedCode: status.embedCode || null,
+        playerUrl: status.playerUrl || null,
+        ready: status.status === 'ready',
+        firstRenditionReady: status.firstRenditionReady || false
       }) + '\n');
     });
     
@@ -1172,8 +1202,7 @@ app.post('/api/upload', async (req, res) => {
         title: finalMedia.title,
         playerUrl: generatePlayerUrl(finalMedia._id),
         embedCode: generateEmbedCode(finalMedia._id),
-        mediaUrl: `https://mdstrm.com/video/${finalMedia._id}`,
-        directLink: `https://streammanager.co/media/${finalMedia._id}`,
+        platformUrl: `https://platform.mediastre.am/media/${finalMedia._id}`,
         youtubeInfo: ytMetadata ? {
           originalTitle: ytMetadata.title,
           author: ytMetadata.author,

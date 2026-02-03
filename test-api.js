@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const token = process.env.MEDIASTREAM_TOKEN;
-const MEDIASTREAM_API = 'https://api.streammanager.co/api';
+const MEDIASTREAM_API = 'https://platform.mediastre.am/api';
 
 async function testMediastreamUpload() {
   console.log('🧪 PROBANDO API DE MEDIASTREAM\n');

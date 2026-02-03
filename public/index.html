@@ -183,6 +183,11 @@
             color: #7b1fa2;
         }
 
+        .status-item.youtube-info {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
         .status-item.success {
             background: #e8f5e9;
             color: #2e7d32;
@@ -260,6 +265,21 @@
             border: 2px solid #4caf50;
         }
 
+        .thumbs-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .thumbs-row img {
+            width: 140px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+
         .result-title {
             color: #2e7d32;
             font-weight: 600;
@@ -334,7 +354,7 @@
         <p class="subtitle">Descarga videos de YouTube y súbelos automáticamente a Mediastream Platform</p>
 
         <div class="info-box">
-            <p><strong>🚀 Sistema Optimizado:</strong> El video se descarga de YouTube y se sube a Mediastream <strong>SIMULTÁNEAMENTE</strong> en chunks de 10MB, lo que hace el proceso hasta 2x más rápido.</p>
+            <p><strong>🚀 Sistema Optimizado:</strong> El video se descarga completo desde YouTube y luego se sube a Mediastream en chunks de 10MB para mayor estabilidad.</p>
             <p><strong>✨ Características:</strong></p>
             <ul style="margin: 10px 0 0 20px; line-height: 1.6;">
                 <li>Máxima calidad disponible (1080p, 4K, 8K)</li>
@@ -348,7 +368,7 @@
             <div class="form-group">
                 <label for="mediastreamToken">
                     Token de Mediastream 
-                    <a href="https://streammanager.co/account" target="_blank" style="color: #667eea; text-decoration: none; font-size: 0.85em;">(obtener token)</a>
+                    <a href="https://platform.mediastre.am/settings/api" target="_blank" style="color: #667eea; text-decoration: none; font-size: 0.85em;">(obtener token)</a>
                 </label>
                 <div class="input-with-icon">
                     <input 
@@ -383,7 +403,7 @@
 
         <div id="resultContainer" style="display: none;">
             <div class="result-container">
-                <div class="result-title">✅ Video subido exitosamente</div>
+                <div class="result-title" id="resultTitle" style="display: none;">✅ Video subido exitosamente</div>
                 
                 <div class="result-item">
                     <div class="result-label">URL del Player:</div>
@@ -398,31 +418,22 @@
                 </div>
 
                 <div class="result-item">
-                    <div class="result-label">Media URL:</div>
-                    <div class="result-value" id="mediaUrl"></div>
-                    <button class="copy-btn" onclick="copyToClipboard('mediaUrl')">Copiar</button>
+                    <div class="result-label">URL en Mediastream Platform:</div>
+                    <div class="result-value" id="platformUrl"></div>
+                    <button class="copy-btn" onclick="copyToClipboard('platformUrl')">Copiar</button>
                 </div>
-                
-                <div class="result-item">
-                    <div class="result-label">Link Directo (Streammanager):</div>
-                    <div class="result-value" id="directLink"></div>
-                    <button class="copy-btn" onclick="copyToClipboard('directLink')">Copiar</button>
-                </div>
-                
+
                 <div class="result-item" id="youtubeInfo" style="display: none;">
                     <div class="result-label">Información de YouTube:</div>
                     <div class="result-value" id="youtubeInfoData"></div>
+                    <div class="thumbs-row" id="youtubeThumbs" style="display: none;"></div>
                 </div>
                 
-                <div class="result-item" id="processingInfo">
+                <div class="result-item" id="processingInfo" style="display: none;">
                     <div class="result-label">Estado del Procesamiento:</div>
                     <div class="result-value" id="processingStatus"></div>
                 </div>
 
-                <div class="player-preview">
-                    <h3>Vista Previa:</h3>
-                    <div id="playerEmbed"></div>
-                </div>
             </div>
         </div>
     </div>
@@ -475,6 +486,7 @@
             Object.keys(statusElements).forEach(key => delete statusElements[key]);
             statusContainer.classList.add('active');
             resultContainer.style.display = 'none';
+            document.getElementById('resultTitle').style.display = 'none';
             submitBtn.disabled = true;
             submitBtn.textContent = 'Procesando...';
 
@@ -536,6 +548,7 @@
                 });
                 
                 createOrUpdateStatus('success', data.message, null, false, true);
+                document.getElementById('resultTitle').style.display = 'block';
                 
                 // Mostrar tiempo total
                 showTotalTime(totalTime);
@@ -543,6 +556,10 @@
                 showResults(data.data);
             } else if (data.status === 'error') {
                 createOrUpdateStatus('error', data.message, null, false, false);
+            } else if (data.status === 'youtube-info') {
+                renderYouTubeStatus(data.data);
+            } else if (data.status === 'processing') {
+                updateProcessingInfo(data.message);
             } else {
                 // Mapear status relacionados a la misma línea
                 const statusKey = STATUS_MAP[data.status] || data.status;
@@ -697,16 +714,11 @@
         function showResults(data) {
             document.getElementById('playerUrl').textContent = data.playerUrl;
             document.getElementById('embedCode').textContent = data.embedCode;
-            document.getElementById('mediaUrl').textContent = data.mediaUrl;
-            document.getElementById('directLink').textContent = data.directLink;
-            document.getElementById('playerEmbed').innerHTML = data.embedCode;
+            document.getElementById('platformUrl').textContent = data.platformUrl || '';
             
             // Mostrar información de YouTube
             if (data.youtubeInfo) {
-                const ytInfo = data.youtubeInfo;
-                const infoText = `📹 Título: ${ytInfo.originalTitle}\n👤 Canal: ${ytInfo.author}\n⏱️ Duración: ${ytInfo.duration}`;
-                document.getElementById('youtubeInfoData').textContent = infoText;
-                document.getElementById('youtubeInfo').style.display = 'block';
+                showYouTubeInfo(data.youtubeInfo);
             }
             
             // Mostrar estado de procesamiento
@@ -739,6 +751,80 @@
             }
             
             resultContainer.style.display = 'block';
+        }
+
+        function showYouTubeInfo(ytInfo) {
+            if (!ytInfo) return;
+            const title = ytInfo.originalTitle || ytInfo.title || 'N/A';
+            const author = ytInfo.author || 'N/A';
+            const duration = ytInfo.duration !== undefined ? ytInfo.duration : 'N/A';
+            const views = ytInfo.viewCount !== undefined ? ytInfo.viewCount : 'N/A';
+            const uploadDate = ytInfo.uploadDate || 'N/A';
+            const infoText = `📹 Título: ${title}\n👤 Canal: ${author}\n⏱️ Duración: ${duration}\n👁️ Vistas: ${views}\n📅 Fecha: ${uploadDate}`;
+            document.getElementById('youtubeInfoData').textContent = infoText;
+            document.getElementById('youtubeInfo').style.display = 'block';
+
+            const thumbsContainer = document.getElementById('youtubeThumbs');
+            if (Array.isArray(ytInfo.thumbnails) && ytInfo.thumbnails.length > 0) {
+                thumbsContainer.innerHTML = '';
+                ytInfo.thumbnails.forEach((url) => {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.alt = 'YouTube thumbnail';
+                    thumbsContainer.appendChild(img);
+                });
+                thumbsContainer.style.display = 'flex';
+            }
+        }
+
+
+        function updateProcessingInfo(message) {
+            if (!message) return;
+            const processingInfo = document.getElementById('processingInfo');
+            const statusElement = document.getElementById('processingStatus');
+            statusElement.textContent = message;
+            processingInfo.style.display = 'block';
+        }
+
+        function renderYouTubeStatus(ytInfo) {
+            const title = ytInfo?.title ? `: ${ytInfo.title}` : '';
+            const message = `Metadata de YouTube encontrada${title}`;
+            createOrUpdateStatus('youtube-info', message, null, false, false);
+
+            const statusItem = statusElements['youtube-info'];
+            if (!statusItem) return;
+
+            const infoText = [
+                `📹 Título: ${ytInfo?.title || 'N/A'}`,
+                `👤 Canal: ${ytInfo?.author || 'N/A'}`,
+                `⏱️ Duración: ${ytInfo?.duration ?? 'N/A'}`,
+                `👁️ Vistas: ${ytInfo?.viewCount ?? 'N/A'}`,
+                `📅 Fecha: ${ytInfo?.uploadDate || 'N/A'}`
+            ].join('\n');
+
+            let infoBlock = statusItem.querySelector('.youtube-info-block');
+            if (!infoBlock) {
+                infoBlock = document.createElement('div');
+                infoBlock.className = 'youtube-info-block result-value';
+                statusItem.appendChild(infoBlock);
+            }
+            infoBlock.textContent = infoText;
+
+            let thumbs = statusItem.querySelector('.youtube-thumbs');
+            if (!thumbs) {
+                thumbs = document.createElement('div');
+                thumbs.className = 'thumbs-row youtube-thumbs';
+                statusItem.appendChild(thumbs);
+            }
+            thumbs.innerHTML = '';
+            if (Array.isArray(ytInfo?.thumbnails)) {
+                ytInfo.thumbnails.forEach((url) => {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.alt = 'YouTube thumbnail';
+                    thumbs.appendChild(img);
+                });
+            }
         }
 
         function copyToClipboard(elementId) {

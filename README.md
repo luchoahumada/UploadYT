@@ -5,23 +5,19 @@ Aplicación web avanzada que descarga videos de YouTube en máxima calidad y los
 ## ✨ Características
 
 ### 🚀 Sistema de Upload Optimizado
-- **Descarga + Upload SIMULTÁNEO**: Mientras descarga de YouTube, va subiendo chunks a Mediastream en paralelo
-- **Sin esperas**: No espera a que termine la descarga para empezar a subir
-- **Chunks de 10MB**: Sube el video en partes pequeñas conforme se va descargando
-- **Progreso en tiempo real**: Muestra progreso de descarga Y upload simultáneamente
+
+- **Descarga completa + upload por chunks**: Primero descarga el MP4 y luego sube en partes
+- **Chunks de 10MB**: Sube el video en partes pequeñas para mayor estabilidad
+- **Progreso en tiempo real**: Muestra progreso de descarga y luego de upload
 - **Sin límites de tamaño**: Soporta videos de cualquier tamaño (GB, horas, 4K, 8K)
 
 ### 📝 Metadata Completa de YouTube → Mediastream
 - ✅ **Título**: Copia el título original del video
 - ✅ **Descripción**: Copia la descripción completa
 - ✅ **Thumbnail/Cover**: Descarga y sube la miniatura del video
-- ✅ **Canal/Autor**: Guarda el nombre del canal
 - ✅ **Fecha de publicación**: Guarda cuándo se publicó en YouTube
-- ✅ **Vistas**: Guarda el número de vistas
-- ✅ **Duración**: Guarda la duración del video
 - ✅ **Video ID**: Guarda el ID de YouTube y URL original
 - ✅ **Tags**: Agrega tags automáticos (youtube, canal)
-- ✅ **Custom Fields**: Toda la metadata adicional se guarda en custom fields
 
 ### 🎬 Calidad de Video
 - **Máxima calidad disponible**: 1080p, 4K, 8K, etc.
@@ -105,7 +101,7 @@ npm run dev
 6. Espera y observa el proceso en tiempo real:
    - ✅ Obtención de metadata de YouTube
    - 📥 Descarga con progreso en %
-   - 📤 Upload por chunks simultáneo
+   - 📤 Upload por chunks
    - 🔍 Búsqueda del media creado
    - 📝 Actualización de metadata
    - ⏱️ Monitoreo de procesamiento (hasta que esté listo)
@@ -155,7 +151,7 @@ Descarga un video de YouTube y lo sube a Mediastream.
     "title": "...",
     "playerUrl": "https://mdstrm.com/embed/...",
     "embedCode": "<iframe src='...' ...></iframe>",
-    "mediaUrl": "https://mdstrm.com/video/..."
+    "platformUrl": "https://platform.mediastre.am/media/..."
   }
 }
 ```
@@ -174,19 +170,18 @@ Verifica el estado del servidor.
 
 ## ⚠️ Notas Importantes
 
-### 🔥 Cómo Funciona el Sistema de Upload Simultáneo
+### 🔥 Cómo Funciona el Sistema de Upload (no simultáneo)
 
 1. **Fase 1 - Obtención de metadata (2-5s)**:
    - Se conecta a YouTube y obtiene toda la información del video
    - Descarga el thumbnail/miniatura del video
    - Obtiene upload token de Mediastream
 
-2. **Fase 2 - Download + Upload SIMULTÁNEO** (depende del tamaño):
-   - **yt-dlp** empieza a descargar el video a un archivo temporal
-   - **Cada 3 segundos** el sistema revisa cuántos bytes se han descargado
-   - **Conforme se descarga**, va creando chunks de 10MB y subiéndolos a Mediastream
-   - **NO ESPERA** a que termine la descarga para empezar a subir
-   - Resultado: **Proceso mucho más rápido** que descargar → esperar → subir
+2. **Fase 2 - Download completo + Upload por chunks** (depende del tamaño):
+   - **yt-dlp** descarga el video completo a un archivo temporal MP4
+   - Luego se divide en chunks de 10MB
+   - Se suben los chunks secuencialmente a Mediastream
+   - **Nota:** este proyecto **no sube simultáneamente mientras descarga**
 
 3. **Fase 3 - Búsqueda del media (2-40s)**:
    - Busca el media creado en Mediastream cada 2 segundos
@@ -204,22 +199,11 @@ Verifica el estado del servidor.
    - Verifica cada 10 segundos hasta que tenga rendiciones disponibles
    - Puede tardar minutos u horas dependiendo del tamaño del video
 
-### 📊 Ejemplo de Tiempos
-
-| Video | Tamaño | Descarga | Upload Simultáneo | Total |
-|-------|--------|----------|-------------------|-------|
-| 5 min 720p | ~50MB | 20s | +5s | ~25s |
-| 30 min 1080p | ~500MB | 2-3 min | +30s | ~3.5 min |
-| 1 hora 4K | ~5GB | 15-20 min | +3 min | ~20 min |
-
-*Tiempos estimados con buena conexión a internet*
-
 ### 💡 Ventajas del Sistema
 
-✅ **Mucho más rápido**: Upload simultáneo ahorra tiempo  
+✅ **Robusto**: Descarga completa antes de subir para evitar errores de tamaño  
 ✅ **Sin límites**: Soporta videos de cualquier tamaño  
 ✅ **Metadata completa**: Toda la info de YouTube se preserva  
-✅ **Robusto**: Usa yt-dlp (no APIs que fallan)  
 ✅ **Visible**: Muestra tiempo consumido de cada etapa  
 
 ### 🔧 Requisitos
@@ -253,10 +237,11 @@ YouTube bloquea descargas automatizadas. La aplicación usa cookies de Chrome au
 3. Vuelve a intentar la descarga
 
 **Si usas otro navegador:**
-Edita `server.js` líneas ~143 y ~45, cambia `'chrome'` por:
-- `'firefox'` si usas Firefox
-- `'safari'` si usas Safari  
-- `'edge'` si usas Edge
+Configura la variable de entorno `YT_COOKIES_BROWSER`:
+```bash
+export YT_COOKIES_BROWSER=firefox
+```
+Valores comunes: `chrome`, `firefox`, `safari`, `edge`.
 
 **Actualizar yt-dlp:**
 ```bash
